@@ -9,11 +9,12 @@ from vpython import *
 scene = canvas(title='Gravity',
      width=1000, height=1000)
 
-dt = 100
-Dimensions = 6
+dt = 0.00001
+Dimensions = 3
 
-G = 6.67408e-11 * 100_000_000  # Otherwise the bodies would not move given the small value of gravitational constant
-NUM_OF_BODIES = 100
+G = 6.67408e-11  # Otherwise the bodies would not move given the small value of gravitational constant
+C = 299792458.0  # light speed
+NUM_OF_BODIES = 2
 D = 0
 '''
 WIDTH = 800
@@ -26,12 +27,24 @@ D = 400
 exist = np.ones((NUM_OF_BODIES), dtype=int)
 
 Velocity = np.zeros((NUM_OF_BODIES, Dimensions), dtype=float)
-Position = np.random.uniform(low=D - 100, high=D + 100, size=(NUM_OF_BODIES, 3))
-m = np.random.randint(1, 10, size=NUM_OF_BODIES)
-m = np.where(m == 0, 1, m)
-r = np.array(np.sqrt(np.abs(m)))
+Position = np.random.uniform(low=D - 1e7, high=D + 1e7, size=(NUM_OF_BODIES, 3))
+m = np.random.randint(1, 10, size=NUM_OF_BODIES) * 1e24
+m = np.where(m == 0, 1 * 1e24, m)  # remove zero mass
+stdRO = 7800  # iron
+r = np.array(np.power((3 * np.abs(m)) / (4 * np.pi * stdRO), 1/3))
 
-balls = [sphere(color=(color.red if m[i] > 0 else color.blue), radius=r[i], pos=vector(Position[i][0], Position[i][1], Position[i][2]), p=vector(0, 0, 0)) for i in range(NUM_OF_BODIES)]
+# add black hole in the center
+BlackHoleRO = 4 * 10e17
+Position[0] = [0, 0, 0]
+m[0] = 10 * 2 * 10e30  # 10 SUNs
+r[0] = np.power((3 * np.abs(m[0])) / (4 * np.pi * BlackHoleRO), 1/3)
+Rg = 2 * G * m[0] / np.power(C, 2)
+dt = Position[1] / 1e8
+
+balls = [sphere(color=(color.white if i == 0 else (color.red if m[i] > 0 else color.blue)),
+                radius=r[i],
+                pos=vector(Position[i][0], Position[i][1], Position[i][2]),
+                p=vector(0, 0, 0)) for i in range(NUM_OF_BODIES)]
 
 '''
 pygame.init()
@@ -42,6 +55,7 @@ font = pygame.font.SysFont('Arial', 16)
 text = font.render('0', True, BLUE)
 textRect = text.get_rect()
 '''
+maxvel = 0
 while True:
     '''
     screen.fill(BLACK)
@@ -66,27 +80,41 @@ while True:
         #'''
         eff_distance = scalar_distance - np.abs(r) - abs(r[i])
         for index in range(0, NUM_OF_BODIES):
-            if index == i or balls[index] == 0:
+            if index == i or index == 0 or balls[index] == 0:
                 pass
             elif eff_distance[index] <= 0:
-                Velocity[i] = (m[i] * Velocity[i] + m[index] * Velocity[index]) / (m[i] + m[index])
+                # Velocity[i] = (m[i] * Velocity[i] + m[index] * Velocity[index]) / (m[i] + m[index])  # Galilean rel
+                # Velocity[i] = ?  # Special rel
                 Position[i] = (m[i] * Position[i] + m[index] * Position[index]) / (m[i] + m[index])
                 m[i] += m[index]
-                r[i] = np.sqrt(np.abs(m[i]))
+                r[i] = np.array(np.power((3 * np.abs(m[i])) / (4 * np.pi * BlackHoleRO), 1/3))
                 balls[i].radius = r[i]
-                balls[index].visible = False
+                if balls[index] is not None:
+                    balls[index].visible = False
                 ball = balls[index]
                 del ball
-                balls[index] = 0
+                balls[index] = None
                 exist[index] = 0
                 Velocity[i] = np.zeros(Dimensions)
                 m[index] = 0
         #'''
 
         f = np.reshape(G * m[i] * np.divide(m, np.power(np.ma.masked_invalid(scalar_distance), 3)), (NUM_OF_BODIES, 1))
-        F = (distance * np.ma.masked_invalid(f)).sum(axis=0) / m[i] * dt
+        dV = (distance * np.ma.masked_invalid(f)).sum(axis=0) / m[i] * dt
         position = Position[i]
-        position += F
+        dt = np.linalg.norm(eff_distance[0]) / 1e15
+        # Velocity[i] += dV  # Galilean relativity
+        velnorm = np.linalg.norm(Velocity[i])
+        dvnorm = np.linalg.norm(dV)
+        Velocity[i] = (Velocity[i] + dV) / (1 + velnorm * dvnorm / np.power(C, 2))  # Special relativity
+
+        if velnorm > maxvel:
+            maxvel = velnorm
+            print(maxvel/C, dt, int(eff_distance[0]) / 1000)
+        if velnorm > C:
+            print(velnorm/C, 'higher than C')
+        # Velocity[i] = (Velocity[i] + dV) / (1 + Velocity[i] * dV / np.power(C, 2))  # Special relativity
+        position += Velocity[i]
 
         balls[i].pos = vector(position[0], position[1], position[2])
         '''
